@@ -1,0 +1,6 @@
+.env
+migrate
+*.img
+populate_metadata
+*.json
+*.yaml
