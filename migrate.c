@@ -181,9 +181,23 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                 return cleanup("Failed to read from base image", base_file, overlay_file,
                                output_file, metadata, buffer);
 
-            if (fwrite(buffer, 1, bytes_read, output_file) != bytes_read)
+            uint8_t *encrypted_buffer = malloc(bytes_read);
+            if (!encrypted_buffer)
+                return cleanup("Failed to allocate encrypted buffer", base_file, overlay_file,
+                               output_file, metadata, buffer);
+
+            if (!encrypt_xts_data_with_ctx(&xts_ctx, buffer, encrypted_buffer, bytes_read)) {
+                free(encrypted_buffer);
+                return cleanup("Failed to encrypt base block", base_file, overlay_file, output_file,
+                               metadata, buffer);
+            }
+
+            if (fwrite(encrypted_buffer, 1, bytes_read, output_file) != bytes_read) {
+                free(encrypted_buffer);
                 return cleanup("Failed to write to output image", base_file, overlay_file,
                                output_file, metadata, buffer);
+            }
+            free(encrypted_buffer);
         }
 
         stripe_index++;
