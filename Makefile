@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c99
 TARGET = migrate
 SOURCE = migrate.c
-LIBS = -lssl -lcrypto
+LIBS = -lssl -lcrypto -lyaml
 
 all: $(TARGET)
 
