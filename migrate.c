@@ -223,7 +223,11 @@ cleanup:
 
 int base64_decode(const char *input, unsigned char **output, size_t *output_len) {
     BIO *bio, *b64;
-    BUF_MEM *bufferPtr;
+    BUF_MEM *bufferPtr = BUF_MEM_new();
+    if (!bufferPtr) {
+        fprintf(stderr, "Failed to allocate buffer\n");
+        return 1;
+    }
 
     b64 = BIO_new(BIO_f_base64());
     bio = BIO_new_mem_buf(input, -1);
@@ -231,7 +235,11 @@ int base64_decode(const char *input, unsigned char **output, size_t *output_len)
 
     BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
 
-    BUF_MEM_grow(bufferPtr, strlen(input));
+    if (!BUF_MEM_grow(bufferPtr, strlen(input))) {
+        fprintf(stderr, "Failed to grow buffer\n");
+        BUF_MEM_free(bufferPtr);
+        return 1;
+    }
     *output_len = BIO_read(bio, (unsigned char *)bufferPtr->data, strlen(input));
 
     *output = malloc(*output_len);
@@ -257,7 +265,6 @@ int parse_kek_file(const char *filename, key_encryption_cipher_t *kek) {
     char key_b64[256] = {0};
     char iv_b64[256] = {0};
     char auth_data_b64[256] = {0};
-    char method[64] = {0};
 
     while (fgets(line, sizeof(line), file)) {
         line[strcspn(line, "\n")] = 0;
@@ -267,19 +274,12 @@ int parse_kek_file(const char *filename, key_encryption_cipher_t *kek) {
         } else if (strncmp(line, "init_vector: ", 13) == 0) {
             strncpy(iv_b64, line + 14, sizeof(iv_b64) - 1);
             iv_b64[sizeof(iv_b64) - 1] = '\0';
-        } else if (strncmp(line, "method: ", 8) == 0) {
-            strncpy(method, line + 9, sizeof(method) - 1);
-            method[sizeof(method) - 1] = '\0';
         } else if (strncmp(line, "auth_data: ", 11) == 0) {
             strncpy(auth_data_b64, line + 12, sizeof(auth_data_b64) - 1);
             auth_data_b64[sizeof(auth_data_b64) - 1] = '\0';
         }
     }
     fclose(file);
-    if (strcmp(method, "\"aes256-gcm\"") != 0) {
-        fprintf(stderr, "Unsupported method: %s\n", method);
-        return 0;
-    }
     if (!base64_decode(key_b64, &kek->key, &kek->key_len)) {
         fprintf(stderr, "Failed to decode key\n");
         return 0;
