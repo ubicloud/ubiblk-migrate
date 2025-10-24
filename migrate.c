@@ -10,6 +10,7 @@
 #include <openssl/err.h>
 #include <openssl/bio.h>
 #include <openssl/buffer.h>
+#include <yaml.h>
 
 #define UBI_METADATA_SIZE (8 * 1024 * 1024)
 #define UBI_MAX_STRIPES (2 * 1024 * 1024)
@@ -257,29 +258,70 @@ int base64_decode(const char *input, unsigned char **output, size_t *output_len)
 }
 
 int parse_kek_file(const char *filename, key_encryption_cipher_t *kek) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        fprintf(stderr, "Failed to open KEK file: %s\n", filename);
-        return 0;
-    }
-    char line[256];
+    FILE *file = NULL;
+    yaml_parser_t parser;
+    yaml_event_t event;
+    int done = 0;
+    int state = 0;  // 0 = expecting key, 1 = expecting init_vector, 2 = expecting auth_data
     char key_b64[256] = {0};
     char iv_b64[256] = {0};
     char auth_data_b64[256] = {0};
 
-    while (fgets(line, sizeof(line), file)) {
-        line[strcspn(line, "\n")] = 0;
-        if (strncmp(line, "key: ", 5) == 0) {
-            strncpy(key_b64, line + 6, sizeof(key_b64) - 1);
-            key_b64[sizeof(key_b64) - 1] = '\0';
-        } else if (strncmp(line, "init_vector: ", 13) == 0) {
-            strncpy(iv_b64, line + 14, sizeof(iv_b64) - 1);
-            iv_b64[sizeof(iv_b64) - 1] = '\0';
-        } else if (strncmp(line, "auth_data: ", 11) == 0) {
-            strncpy(auth_data_b64, line + 12, sizeof(auth_data_b64) - 1);
-            auth_data_b64[sizeof(auth_data_b64) - 1] = '\0';
-        }
+    file = fopen(filename, "r");
+    if (!file) {
+        fprintf(stderr, "Failed to open KEK file: %s\n", filename);
+        return 0;
     }
+    if (!yaml_parser_initialize(&parser)) {
+        fprintf(stderr, "Failed to initialize YAML parser\n");
+        fclose(file);
+        return 0;
+    }
+    yaml_parser_set_input_file(&parser, file);
+    while (!done) {
+        if (!yaml_parser_parse(&parser, &event)) {
+            fprintf(stderr, "Failed to parse YAML\n");
+            yaml_parser_delete(&parser);
+            fclose(file);
+            return 0;
+        }
+
+        switch (event.type) {
+            case YAML_SCALAR_EVENT:
+                if (state == 0 && strcmp((char *)event.data.scalar.value, "key") == 0) {
+                    state = 1;
+                } else if (state == 1) {
+                    strncpy(key_b64, (char *)event.data.scalar.value, sizeof(key_b64) - 1);
+                    key_b64[sizeof(key_b64) - 1] = '\0';
+                    state = 0;
+                } else if (state == 0 &&
+                           strcmp((char *)event.data.scalar.value, "init_vector") == 0) {
+                    state = 2;
+                } else if (state == 2) {
+                    strncpy(iv_b64, (char *)event.data.scalar.value, sizeof(iv_b64) - 1);
+                    iv_b64[sizeof(iv_b64) - 1] = '\0';
+                    state = 0;
+                } else if (state == 0 &&
+                           strcmp((char *)event.data.scalar.value, "auth_data") == 0) {
+                    state = 3;
+                } else if (state == 3) {
+                    strncpy(auth_data_b64, (char *)event.data.scalar.value,
+                            sizeof(auth_data_b64) - 1);
+                    auth_data_b64[sizeof(auth_data_b64) - 1] = '\0';
+                    state = 0;
+                }
+                break;
+            case YAML_STREAM_END_EVENT:
+                done = 1;
+                break;
+            default:
+                break;
+        }
+
+        yaml_event_delete(&event);
+    }
+
+    yaml_parser_delete(&parser);
     fclose(file);
     if (!base64_decode(key_b64, &kek->key, &kek->key_len)) {
         fprintf(stderr, "Failed to decode key\n");
@@ -319,10 +361,12 @@ int parse_vhost_backend_conf(const char *filename, unsigned char **key1, size_t 
         // If we found encryption_key, read the next two lines as keys
         if (found_encryption_key) {
             if (key1_auth_tag_b64[0] == 0) {
-                strncpy(key1_auth_tag_b64, line + 2, sizeof(key1_auth_tag_b64) - 1);  // Skip the "- " prefix
+                strncpy(key1_auth_tag_b64, line + 2,
+                        sizeof(key1_auth_tag_b64) - 1);  // Skip the "- " prefix
                 key1_auth_tag_b64[sizeof(key1_auth_tag_b64) - 1] = '\0';
             } else if (key2_auth_tag_b64[0] == 0) {
-                strncpy(key2_auth_tag_b64, line + 2, sizeof(key2_auth_tag_b64) - 1);  // Skip the "- " prefix
+                strncpy(key2_auth_tag_b64, line + 2,
+                        sizeof(key2_auth_tag_b64) - 1);  // Skip the "- " prefix
                 key2_auth_tag_b64[sizeof(key2_auth_tag_b64) - 1] = '\0';
                 break;
             }
