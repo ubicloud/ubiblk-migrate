@@ -68,6 +68,8 @@ int init_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *key1,
 void cleanup_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx);
 int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *encrypted_data,
                               unsigned char *decrypted_data, size_t data_len);
+int encrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *plaintext_data,
+                              unsigned char *encrypted_data, size_t data_len);
 
 enum stripe_status { STRIPE_NOT_FETCHED = 0, STRIPE_INFLIGHT, STRIPE_FAILED, STRIPE_FETCHED };
 
