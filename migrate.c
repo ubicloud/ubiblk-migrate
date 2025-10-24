@@ -20,6 +20,7 @@
 #define IV_LENGTH 12
 #define AUTH_TAG_LENGTH 16
 #define SECTOR_SIZE 512
+#define KEY_AUTH_TAG_LENGTH (KEY_LENGTH + AUTH_TAG_LENGTH)
 
 typedef struct {
     EVP_CIPHER_CTX *ctx;
@@ -305,8 +306,8 @@ int parse_vhost_backend_conf(const char *filename, unsigned char **key1, size_t 
 
     char line[512];
     int found_encryption_key = 0;
-    char key1_b64[512] = {0};
-    char key2_b64[512] = {0};
+    char key1_auth_tag_b64[512] = {0};
+    char key2_auth_tag_b64[512] = {0};
 
     while (fgets(line, sizeof(line), file)) {
         line[strcspn(line, "\n")] = 0;
@@ -317,26 +318,26 @@ int parse_vhost_backend_conf(const char *filename, unsigned char **key1, size_t 
         }
         // If we found encryption_key, read the next two lines as keys
         if (found_encryption_key) {
-            if (key1_b64[0] == 0) {
-                strncpy(key1_b64, line + 2, sizeof(key1_b64) - 1);  // Skip the "- " prefix
-                key1_b64[sizeof(key1_b64) - 1] = '\0';
-            } else if (key2_b64[0] == 0) {
-                strncpy(key2_b64, line + 2, sizeof(key2_b64) - 1);  // Skip the "- " prefix
-                key2_b64[sizeof(key2_b64) - 1] = '\0';
+            if (key1_auth_tag_b64[0] == 0) {
+                strncpy(key1_auth_tag_b64, line + 2, sizeof(key1_auth_tag_b64) - 1);  // Skip the "- " prefix
+                key1_auth_tag_b64[sizeof(key1_auth_tag_b64) - 1] = '\0';
+            } else if (key2_auth_tag_b64[0] == 0) {
+                strncpy(key2_auth_tag_b64, line + 2, sizeof(key2_auth_tag_b64) - 1);  // Skip the "- " prefix
+                key2_auth_tag_b64[sizeof(key2_auth_tag_b64) - 1] = '\0';
                 break;
             }
         }
     }
     fclose(file);
-    if (key1_b64[0] == 0 || key2_b64[0] == 0) {
+    if (key1_auth_tag_b64[0] == 0 || key2_auth_tag_b64[0] == 0) {
         fprintf(stderr, "Failed to find both encryption keys in vhost-backend-conf file\n");
         return 0;
     }
-    if (!base64_decode(key1_b64, key1, key1_len)) {
+    if (!base64_decode(key1_auth_tag_b64, key1, key1_len)) {
         fprintf(stderr, "Failed to decode key1\n");
         return 0;
     }
-    if (!base64_decode(key2_b64, key2, key2_len)) {
+    if (!base64_decode(key2_auth_tag_b64, key2, key2_len)) {
         fprintf(stderr, "Failed to decode key2\n");
         return 0;
     }
@@ -399,8 +400,8 @@ int decrypt_keys(const unsigned char *key1, size_t key1_len, const unsigned char
                  size_t key2_len, const key_encryption_cipher_t *kek, unsigned char *decrypted_key1,
                  size_t *decrypted_key1_len, unsigned char *decrypted_key2,
                  size_t *decrypted_key2_len) {
-    if (key1_len != KEY_LENGTH || key2_len != KEY_LENGTH) {
-        fprintf(stderr, "Key length must be %d bytes\n", KEY_LENGTH);
+    if (key1_len != KEY_AUTH_TAG_LENGTH || key2_len != KEY_AUTH_TAG_LENGTH) {
+        fprintf(stderr, "Key length must be %d bytes\n", KEY_AUTH_TAG_LENGTH);
         return 0;
     }
     if (!kek->key || kek->key_len != 32) {
