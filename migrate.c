@@ -66,6 +66,8 @@ int decrypt_key_aes_gcm(const unsigned char *kek_key, size_t kek_key_len,
 int init_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *key1,
                          const unsigned char *key2);
 void cleanup_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx);
+int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *encrypted_data,
+                              unsigned char *decrypted_data, size_t data_len);
 
 enum stripe_status { STRIPE_NOT_FETCHED = 0, STRIPE_INFLIGHT, STRIPE_FAILED, STRIPE_FETCHED };
 
@@ -74,12 +76,13 @@ int ubi_get_stripe_status_from_metadata(struct ubi_metadata *metadata, int index
 }
 
 int flatten_image(const char *base_image_path, const char *overlay_image_path,
-                  const char *output_path) {
+                  const char *output_path, xts_decrypt_ctx_t xts_ctx) {
     FILE *base_file = NULL;
     FILE *overlay_file = NULL;
     FILE *output_file = NULL;
     struct ubi_metadata *metadata = NULL;
     uint8_t *buffer = NULL;
+    uint8_t *encrypted_metadata = NULL;
 
     base_file = fopen(base_image_path, "rb");
     if (!base_file)
@@ -94,17 +97,27 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
         return cleanup("Failed to create output image", base_file, overlay_file, output_file,
                        metadata, buffer);
 
-    // Read metadata from the overlay file (first 8MB)
+    // Read encrypted metadata from the overlay file (first 8MB)
     metadata = calloc(1, sizeof(struct ubi_metadata));
     if (!metadata)
         return cleanup("Failed to allocate memory for metadata", base_file, overlay_file,
                        output_file, metadata, buffer);
+    encrypted_metadata = malloc(sizeof(struct ubi_metadata));
+    if (!encrypted_metadata)
+        return cleanup("Failed to allocate memory for encrypted metadata", base_file, overlay_file,
+                       output_file, metadata, buffer);
     if (fseek(overlay_file, 0, SEEK_SET) != 0)
         return cleanup("Failed to seek to beginning of overlay file", base_file, overlay_file,
                        output_file, metadata, buffer);
-    if (fread(metadata, 1, sizeof(struct ubi_metadata), overlay_file) !=
+    if (fread(encrypted_metadata, 1, sizeof(struct ubi_metadata), overlay_file) !=
         sizeof(struct ubi_metadata))
-        return cleanup("Failed to read metadata", base_file, overlay_file, output_file, metadata,
+        return cleanup("Failed to read encrypted metadata", base_file, overlay_file, output_file,
+                       metadata, buffer);
+
+    // Decrypt the metadata
+    if (!decrypt_xts_data_with_ctx(&xts_ctx, encrypted_metadata, (uint8_t *)metadata,
+                                   sizeof(struct ubi_metadata)))
+        return cleanup("Failed to decrypt metadata", base_file, overlay_file, output_file, metadata,
                        buffer);
 
     if (memcmp(metadata->magic, UBI_MAGIC, UBI_MAGIC_SIZE) != 0)
@@ -615,7 +628,7 @@ int main(int argc, char *argv[]) {
     }
     printf("Decryption context initialized successfully\n");
 
-    if (flatten_image(base_image, overlay_image, output_image) != 0) {
+    if (flatten_image(base_image, overlay_image, output_image, xts_ctx) != 0) {
         return 1;
     }
 
