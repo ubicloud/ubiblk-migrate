@@ -67,9 +67,9 @@ int init_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *key1,
                          const unsigned char *key2);
 void cleanup_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx);
 int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *encrypted_data,
-                              unsigned char *decrypted_data, size_t data_len);
+                              unsigned char *decrypted_data, size_t data_len, size_t sector_offset);
 int encrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *plaintext_data,
-                              unsigned char *encrypted_data, size_t data_len);
+                              unsigned char *encrypted_data, size_t data_len, size_t sector_offset);
 
 enum stripe_status { STRIPE_NOT_FETCHED = 0, STRIPE_INFLIGHT, STRIPE_FAILED, STRIPE_FETCHED };
 
@@ -118,7 +118,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
 
     // Decrypt the metadata
     if (!decrypt_xts_data_with_ctx(&xts_ctx, encrypted_metadata, (uint8_t *)metadata,
-                                   sizeof(struct ubi_metadata)))
+                                   sizeof(struct ubi_metadata), 0))
         return cleanup("Failed to decrypt metadata", base_file, overlay_file, output_file, metadata,
                        buffer);
 
@@ -183,18 +183,21 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                 return cleanup("Failed to read from base image", base_file, overlay_file,
                                output_file, metadata, buffer);
 
-            uint8_t *encrypted_buffer = malloc(bytes_read);
+            uint8_t *encrypted_buffer = malloc(block_size);
             if (!encrypted_buffer)
                 return cleanup("Failed to allocate encrypted buffer", base_file, overlay_file,
                                output_file, metadata, buffer);
 
-            if (!encrypt_xts_data_with_ctx(&xts_ctx, buffer, encrypted_buffer, bytes_read)) {
+            size_t sectors_per_block = block_size / SECTOR_SIZE;
+            size_t sector_offset = stripe_index * sectors_per_block;
+            if (!encrypt_xts_data_with_ctx(&xts_ctx, buffer, encrypted_buffer, block_size,
+                                           sector_offset)) {
                 free(encrypted_buffer);
                 return cleanup("Failed to encrypt base block", base_file, overlay_file, output_file,
                                metadata, buffer);
             }
 
-            if (fwrite(encrypted_buffer, 1, bytes_read, output_file) != bytes_read) {
+            if (fwrite(encrypted_buffer, 1, block_size, output_file) != block_size) {
                 free(encrypted_buffer);
                 return cleanup("Failed to write to output image", base_file, overlay_file,
                                output_file, metadata, buffer);
@@ -526,7 +529,8 @@ void cleanup_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx) {
 }
 
 int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *encrypted_data,
-                              unsigned char *decrypted_data, size_t data_len) {
+                              unsigned char *decrypted_data, size_t data_len,
+                              size_t sector_offset) {
     int len, plaintext_len;
     unsigned char tweak[16];
     size_t num_sectors = data_len / SECTOR_SIZE;
@@ -535,21 +539,22 @@ int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *e
         // Prepare tweak value (sector number as little-endian in second 8 bytes)
         memset(tweak, 0, 16);
         // Encode the sector number as little-endian into the second 8 bytes
-        memcpy(tweak + 8, &i, sizeof(i));
+        size_t sector_num = sector_offset + i;
+        memcpy(tweak + 8, &sector_num, sizeof(sector_num));
 
         if (!EVP_DecryptInit_ex(xts_ctx->ctx, NULL, NULL, xts_ctx->keys, tweak)) {
-            fprintf(stderr, "Failed to set key and tweak for sector %zu\n", i);
+            fprintf(stderr, "Failed to set key and tweak for sector %zu\n", sector_num);
             return 0;
         }
         if (!EVP_DecryptUpdate(xts_ctx->ctx, decrypted_data + (i * SECTOR_SIZE), &len,
                                encrypted_data + (i * SECTOR_SIZE), SECTOR_SIZE)) {
-            fprintf(stderr, "Failed to decrypt sector %zu\n", i);
+            fprintf(stderr, "Failed to decrypt sector %zu\n", sector_num);
             return 0;
         }
         plaintext_len = len;
         if (!EVP_DecryptFinal_ex(xts_ctx->ctx, decrypted_data + (i * SECTOR_SIZE) + plaintext_len,
                                  &len)) {
-            fprintf(stderr, "Failed to finalize decryption for sector %zu\n", i);
+            fprintf(stderr, "Failed to finalize decryption for sector %zu\n", sector_num);
             return 0;
         }
         plaintext_len += len;
@@ -558,7 +563,8 @@ int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *e
 }
 
 int encrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *plaintext_data,
-                              unsigned char *encrypted_data, size_t data_len) {
+                              unsigned char *encrypted_data, size_t data_len,
+                              size_t sector_offset) {
     int len, ciphertext_len;
     unsigned char tweak[16];
     size_t num_sectors = data_len / SECTOR_SIZE;
@@ -566,21 +572,22 @@ int encrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *p
         // Prepare tweak value (sector number as little-endian in second 8 bytes)
         memset(tweak, 0, 16);
         // Encode the sector number as little-endian into the second 8 bytes
-        memcpy(tweak + 8, &i, sizeof(i));
+        size_t sector_num = sector_offset + i;
+        memcpy(tweak + 8, &sector_num, sizeof(sector_num));
 
         if (!EVP_EncryptInit_ex(xts_ctx->ctx, NULL, NULL, xts_ctx->keys, tweak)) {
-            fprintf(stderr, "Failed to set key and tweak for sector %zu\n", i);
+            fprintf(stderr, "Failed to set key and tweak for sector %zu\n", sector_num);
             return 0;
         }
         if (!EVP_EncryptUpdate(xts_ctx->ctx, encrypted_data + (i * SECTOR_SIZE), &len,
                                plaintext_data + (i * SECTOR_SIZE), SECTOR_SIZE)) {
-            fprintf(stderr, "Failed to encrypt sector %zu\n", i);
+            fprintf(stderr, "Failed to encrypt sector %zu\n", sector_num);
             return 0;
         }
         ciphertext_len = len;
         if (!EVP_EncryptFinal_ex(xts_ctx->ctx, encrypted_data + (i * SECTOR_SIZE) + ciphertext_len,
                                  &len)) {
-            fprintf(stderr, "Failed to finalize encryption for sector %zu\n", i);
+            fprintf(stderr, "Failed to finalize encryption for sector %zu\n", sector_num);
             return 0;
         }
         ciphertext_len += len;
