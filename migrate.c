@@ -174,9 +174,49 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                 return cleanup("Failed to read from overlay image", base_file, overlay_file,
                                output_file, metadata, buffer);
 
-            if (fwrite(buffer, 1, bytes_read, output_file) != bytes_read)
+            // Decrypt the overlay block with the correct sector offset (accounting for metadata)
+            uint8_t *decrypted_buffer = malloc(block_size);
+            if (!decrypted_buffer)
+                return cleanup("Failed to allocate decrypted buffer", base_file, overlay_file,
+                               output_file, metadata, buffer);
+
+            size_t sectors_per_block = block_size / SECTOR_SIZE;
+            // Overlay file has 8MB metadata, so its sector numbering is offset
+            size_t overlay_sector_offset =
+                stripe_index * sectors_per_block + (UBI_METADATA_SIZE / SECTOR_SIZE);
+
+            if (!decrypt_xts_data_with_ctx(&xts_ctx, buffer, decrypted_buffer, block_size,
+                                           overlay_sector_offset)) {
+                free(decrypted_buffer);
+                return cleanup("Failed to decrypt overlay block", base_file, overlay_file,
+                               output_file, metadata, buffer);
+            }
+
+            // Re-encrypt with the correct sector offset for the output file
+            uint8_t *reencrypted_buffer = malloc(block_size);
+            if (!reencrypted_buffer) {
+                free(decrypted_buffer);
+                return cleanup("Failed to allocate reencrypted buffer", base_file, overlay_file,
+                               output_file, metadata, buffer);
+            }
+
+            size_t output_sector_offset = stripe_index * sectors_per_block;
+            if (!encrypt_xts_data_with_ctx(&xts_ctx, decrypted_buffer, reencrypted_buffer,
+                                           block_size, output_sector_offset)) {
+                free(decrypted_buffer);
+                free(reencrypted_buffer);
+                return cleanup("Failed to re-encrypt overlay block", base_file, overlay_file,
+                               output_file, metadata, buffer);
+            }
+
+            if (fwrite(reencrypted_buffer, 1, bytes_read, output_file) != bytes_read) {
+                free(decrypted_buffer);
+                free(reencrypted_buffer);
                 return cleanup("Failed to write to output image", base_file, overlay_file,
                                output_file, metadata, buffer);
+            }
+            free(decrypted_buffer);
+            free(reencrypted_buffer);
         } else {
             bytes_read = fread(buffer, 1, block_size, base_file);
             if (bytes_read < block_size && !feof(base_file))
