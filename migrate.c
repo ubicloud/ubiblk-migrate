@@ -581,8 +581,9 @@ int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, unsigned char *encrypt
         memset(tweak, 0, 16);
         // Encode the sector number as little-endian into the second 8 bytes
         size_t sector_num = sector_offset + i;
-        memcpy(tweak + 8, &sector_num, sizeof(sector_num));
-
+        for (size_t j = 0; j < 8; j++) {
+            tweak[8 + j] = (unsigned char)((sector_num >> (8 * j)) & 0xFF);
+        }
         if (!EVP_DecryptInit_ex(xts_ctx->ctx, NULL, NULL, xts_ctx->keys, tweak)) {
             fprintf(stderr, "Failed to set key and tweak for sector %zu\n", sector_num);
             return 0;
@@ -614,8 +615,9 @@ int encrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *p
         memset(tweak, 0, 16);
         // Encode the sector number as little-endian into the second 8 bytes
         size_t sector_num = sector_offset + i;
-        memcpy(tweak + 8, &sector_num, sizeof(sector_num));
-
+        for (size_t j = 0; j < 8; j++) {
+            tweak[8 + j] = (unsigned char)((sector_num >> (8 * j)) & 0xFF);
+        }
         if (!EVP_EncryptInit_ex(xts_ctx->ctx, NULL, NULL, xts_ctx->keys, tweak)) {
             fprintf(stderr, "Failed to set key and tweak for sector %zu\n", sector_num);
             return 0;
