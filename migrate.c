@@ -210,7 +210,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                                output_file, metadata, encrypted_metadata, buffer);
             }
 
-            if (fwrite(reencrypted_buffer, 1, bytes_read, output_file) != bytes_read) {
+            if (fwrite(reencrypted_buffer, 1, block_size, output_file) != block_size) {
                 free(decrypted_buffer);
                 free(reencrypted_buffer);
                 return cleanup("Failed to write to output image", base_file, overlay_file,
