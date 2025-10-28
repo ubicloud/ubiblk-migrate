@@ -59,9 +59,8 @@ int decrypt_keys(const unsigned char *key1, size_t key1_len, const unsigned char
                  size_t key2_len, const key_encryption_cipher_t *kek, unsigned char *decrypted_key1,
                  size_t *decrypted_key1_len, unsigned char *decrypted_key2,
                  size_t *decrypted_key2_len);
-int decrypt_key_aes_gcm(const unsigned char *kek_key, size_t kek_key_len,
-                        const unsigned char *kek_iv, size_t kek_iv_len,
-                        const unsigned char *auth_data, size_t auth_data_len,
+int decrypt_key_aes_gcm(const unsigned char *kek_key, const unsigned char *kek_iv,
+                        size_t kek_iv_len, const unsigned char *auth_data, size_t auth_data_len,
                         const unsigned char *encrypted_key, size_t encrypted_key_len,
                         unsigned char *decrypted_key, size_t *decrypted_key_len);
 int init_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *key1,
@@ -461,9 +460,8 @@ int parse_vhost_backend_conf(const char *filename, unsigned char **key1, size_t 
     return 1;
 }
 
-int decrypt_key_aes_gcm(const unsigned char *kek_key, size_t kek_key_len,
-                        const unsigned char *kek_iv, size_t kek_iv_len,
-                        const unsigned char *auth_data, size_t auth_data_len,
+int decrypt_key_aes_gcm(const unsigned char *kek_key, const unsigned char *kek_iv,
+                        size_t kek_iv_len, const unsigned char *auth_data, size_t auth_data_len,
                         const unsigned char *encrypted_key, size_t encrypted_key_len,
                         unsigned char *decrypted_key, size_t *decrypted_key_len) {
     EVP_CIPHER_CTX *ctx = NULL;
@@ -529,15 +527,13 @@ int decrypt_keys(const unsigned char *key1, size_t key1_len, const unsigned char
         fprintf(stderr, "KEK IV is required and must be %d bytes\n", IV_LENGTH);
         return 0;
     }
-    if (!decrypt_key_aes_gcm(kek->key, kek->key_len, kek->iv, kek->iv_len, kek->auth_data,
-                             kek->auth_data_len, key1, key1_len, decrypted_key1,
-                             decrypted_key1_len)) {
+    if (!decrypt_key_aes_gcm(kek->key, kek->iv, kek->iv_len, kek->auth_data, kek->auth_data_len,
+                             key1, key1_len, decrypted_key1, decrypted_key1_len)) {
         fprintf(stderr, "Failed to decrypt key1\n");
         return 0;
     }
-    if (!decrypt_key_aes_gcm(kek->key, kek->key_len, kek->iv, kek->iv_len, kek->auth_data,
-                             kek->auth_data_len, key2, key2_len, decrypted_key2,
-                             decrypted_key2_len)) {
+    if (!decrypt_key_aes_gcm(kek->key, kek->iv, kek->iv_len, kek->auth_data, kek->auth_data_len,
+                             key2, key2_len, decrypted_key2, decrypted_key2_len)) {
         fprintf(stderr, "Failed to decrypt key2\n");
         return 0;
     }
