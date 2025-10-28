@@ -78,7 +78,7 @@ int ubi_get_stripe_status_from_metadata(struct ubi_metadata *metadata, int index
 }
 
 int flatten_image(const char *base_image_path, const char *overlay_image_path,
-                  const char *output_path, xts_decrypt_ctx_t xts_ctx) {
+                  const char *output_path, xts_decrypt_ctx_t *xts_ctx) {
     FILE *base_file = NULL;
     FILE *overlay_file = NULL;
     FILE *output_file = NULL;
@@ -117,7 +117,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                        metadata, buffer);
 
     // Decrypt the metadata
-    if (!decrypt_xts_data_with_ctx(&xts_ctx, encrypted_metadata, (uint8_t *)metadata,
+    if (!decrypt_xts_data_with_ctx(xts_ctx, encrypted_metadata, (uint8_t *)metadata,
                                    sizeof(struct ubi_metadata), 0))
         return cleanup("Failed to decrypt metadata", base_file, overlay_file, output_file, metadata,
                        buffer);
@@ -185,7 +185,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
             size_t overlay_sector_offset =
                 stripe_index * sectors_per_block + (UBI_METADATA_SIZE / SECTOR_SIZE);
 
-            if (!decrypt_xts_data_with_ctx(&xts_ctx, buffer, decrypted_buffer, block_size,
+            if (!decrypt_xts_data_with_ctx(xts_ctx, buffer, decrypted_buffer, block_size,
                                            overlay_sector_offset)) {
                 free(decrypted_buffer);
                 return cleanup("Failed to decrypt overlay block", base_file, overlay_file,
@@ -201,7 +201,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
             }
 
             size_t output_sector_offset = stripe_index * sectors_per_block;
-            if (!encrypt_xts_data_with_ctx(&xts_ctx, decrypted_buffer, reencrypted_buffer,
+            if (!encrypt_xts_data_with_ctx(xts_ctx, decrypted_buffer, reencrypted_buffer,
                                            block_size, output_sector_offset)) {
                 free(decrypted_buffer);
                 free(reencrypted_buffer);
@@ -230,7 +230,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
 
             size_t sectors_per_block = block_size / SECTOR_SIZE;
             size_t sector_offset = stripe_index * sectors_per_block;
-            if (!encrypt_xts_data_with_ctx(&xts_ctx, buffer, encrypted_buffer, block_size,
+            if (!encrypt_xts_data_with_ctx(xts_ctx, buffer, encrypted_buffer, block_size,
                                            sector_offset)) {
                 free(encrypted_buffer);
                 return cleanup("Failed to encrypt base block", base_file, overlay_file, output_file,
@@ -691,7 +691,7 @@ int main(int argc, char *argv[]) {
     }
     printf("Decryption context initialized successfully\n");
 
-    if (flatten_image(base_image, overlay_image, output_image, xts_ctx) != 0) {
+    if (flatten_image(base_image, overlay_image, output_image, &xts_ctx) != 0) {
         return 1;
     }
 
