@@ -687,16 +687,17 @@ int main(int argc, char *argv[]) {
     printf("KEK file: %s\n", kek_file);
     printf("VHost backend conf file: %s\n", vhost_backend_conf_file);
 
-    xts_decrypt_ctx_t xts_ctx = {0};
-    if (process_decryption_files(kek_file, vhost_backend_conf_file, &xts_ctx) != 0) {
+    xts_decrypt_ctx_t *xts_ctx = calloc(1, sizeof(xts_decrypt_ctx_t));
+    if (process_decryption_files(kek_file, vhost_backend_conf_file, xts_ctx) != 0) {
         fprintf(stderr, "Failed to process decryption files\n");
         return 1;
     }
     printf("Decryption context initialized successfully\n");
 
-    if (flatten_image(base_image, overlay_image, output_image, &xts_ctx) != 0) {
+    if (flatten_image(base_image, overlay_image, output_image, xts_ctx) != 0) {
+        cleanup_xts_decrypt_ctx(xts_ctx);
         return 1;
     }
-
+    cleanup_xts_decrypt_ctx(xts_ctx);
     return 0;
 }
