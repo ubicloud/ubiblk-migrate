@@ -33,7 +33,7 @@ make clean
 
 ### migrate
 ```bash
-./migrate -base-image=<path> -overlay-image=<path> -output-image=<path>
+./migrate -base-image=<path> -overlay-image=<path> -output-image=<path> -kek-file=<path> -vhost-backend-conf-file=<path>
 ```
 
 ## Metadata Format
