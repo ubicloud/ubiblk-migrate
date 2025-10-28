@@ -47,7 +47,8 @@ struct ubi_metadata {
 };
 
 int cleanup(char *error_msg, FILE *base_file, FILE *overlay_file, FILE *output_file,
-            struct ubi_metadata *metadata, uint8_t *buffer);
+            struct ubi_metadata *metadata, struct ubi_metadata *encrypted_metadata,
+            uint8_t *buffer);
 int process_decryption_files(const char *kek_file, const char *vhost_backend_conf_file,
                              xts_decrypt_ctx_t *xts_ctx);
 int base64_decode(const char *input, unsigned char **output, size_t *output_len);
@@ -66,7 +67,7 @@ int decrypt_key_aes_gcm(const unsigned char *kek_key, size_t kek_key_len,
 int init_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *key1,
                          const unsigned char *key2);
 void cleanup_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx);
-int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *encrypted_data,
+int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, unsigned char *encrypted_data,
                               unsigned char *decrypted_data, size_t data_len, size_t sector_offset);
 int encrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *plaintext_data,
                               unsigned char *encrypted_data, size_t data_len, size_t sector_offset);
@@ -83,54 +84,54 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
     FILE *overlay_file = NULL;
     FILE *output_file = NULL;
     struct ubi_metadata *metadata = NULL;
+    struct ubi_metadata *encrypted_metadata = NULL;
     uint8_t *buffer = NULL;
-    uint8_t *encrypted_metadata = NULL;
 
     base_file = fopen(base_image_path, "rb");
     if (!base_file)
         return cleanup("Failed to open base image", base_file, overlay_file, output_file, metadata,
-                       buffer);
+                       encrypted_metadata, buffer);
     overlay_file = fopen(overlay_image_path, "rb");
     if (!overlay_file)
         return cleanup("Failed to open overlay image", base_file, overlay_file, output_file,
-                       metadata, buffer);
+                       metadata, encrypted_metadata, buffer);
     output_file = fopen(output_path, "wb");
     if (!output_file)
         return cleanup("Failed to create output image", base_file, overlay_file, output_file,
-                       metadata, buffer);
+                       metadata, encrypted_metadata, buffer);
 
     // Read encrypted metadata from the overlay file (first 8MB)
     metadata = calloc(1, sizeof(struct ubi_metadata));
     if (!metadata)
         return cleanup("Failed to allocate memory for metadata", base_file, overlay_file,
-                       output_file, metadata, buffer);
+                       output_file, metadata, encrypted_metadata, buffer);
     encrypted_metadata = malloc(sizeof(struct ubi_metadata));
     if (!encrypted_metadata)
         return cleanup("Failed to allocate memory for encrypted metadata", base_file, overlay_file,
-                       output_file, metadata, buffer);
+                       output_file, metadata, encrypted_metadata, buffer);
     if (fseek(overlay_file, 0, SEEK_SET) != 0)
         return cleanup("Failed to seek to beginning of overlay file", base_file, overlay_file,
-                       output_file, metadata, buffer);
+                       output_file, metadata, encrypted_metadata, buffer);
     if (fread(encrypted_metadata, 1, sizeof(struct ubi_metadata), overlay_file) !=
         sizeof(struct ubi_metadata))
         return cleanup("Failed to read encrypted metadata", base_file, overlay_file, output_file,
-                       metadata, buffer);
+                       metadata, encrypted_metadata, buffer);
 
     // Decrypt the metadata
-    if (!decrypt_xts_data_with_ctx(xts_ctx, encrypted_metadata, (uint8_t *)metadata,
-                                   sizeof(struct ubi_metadata), 0))
+    if (!decrypt_xts_data_with_ctx(xts_ctx, (unsigned char *)encrypted_metadata,
+                                   (uint8_t *)metadata, sizeof(struct ubi_metadata), 0))
         return cleanup("Failed to decrypt metadata", base_file, overlay_file, output_file, metadata,
-                       buffer);
+                       encrypted_metadata, buffer);
 
     if (memcmp(metadata->magic, UBI_MAGIC, UBI_MAGIC_SIZE) != 0)
         return cleanup("Invalid magic bytes in metadata", base_file, overlay_file, output_file,
-                       metadata, buffer);
+                       encrypted_metadata, metadata, buffer);
 
     size_t block_size = 1024 * 1024;
     buffer = malloc(block_size);
     if (!buffer)
         return cleanup("Failed to allocate buffer", base_file, overlay_file, output_file, metadata,
-                       buffer);
+                       encrypted_metadata, buffer);
 
     printf("Flattening image...\n");
 
@@ -141,14 +142,14 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
         overlay_file_size = st.st_size;
     } else {
         return cleanup("Failed to get the overlay image size", base_file, overlay_file, output_file,
-                       metadata, buffer);
+                       metadata, encrypted_metadata, buffer);
     }
     uint64_t stripe_count = (overlay_file_size - UBI_METADATA_SIZE + block_size - 1) / block_size;
 
     struct stat base_st;
     if (stat(base_image_path, &base_st) != 0) {
         return cleanup("Failed to get the base image size", base_file, overlay_file, output_file,
-                       metadata, buffer);
+                       metadata, encrypted_metadata, buffer);
     }
     uint64_t base_stripe_count = (base_st.st_size + block_size - 1) / block_size;
 
@@ -158,13 +159,13 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
         off_t overlay_offset = UBI_METADATA_SIZE + offset;
         if (fseek(base_file, offset, SEEK_SET) != 0)
             return cleanup("Failed to seek in base image", base_file, overlay_file, output_file,
-                           metadata, buffer);
+                           metadata, encrypted_metadata, buffer);
         if (fseek(overlay_file, overlay_offset, SEEK_SET) != 0)
             return cleanup("Failed to seek in overlay image", base_file, overlay_file, output_file,
-                           metadata, buffer);
+                           metadata, encrypted_metadata, buffer);
         if (fseek(output_file, offset, SEEK_SET) != 0)
             return cleanup("Failed to seek in output image", base_file, overlay_file, output_file,
-                           metadata, buffer);
+                           metadata, encrypted_metadata, buffer);
 
         size_t bytes_read;
         if (stripe_index >= base_stripe_count ||
@@ -172,13 +173,13 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
             bytes_read = fread(buffer, 1, block_size, overlay_file);
             if (bytes_read < block_size && !feof(overlay_file))
                 return cleanup("Failed to read from overlay image", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
 
             // Decrypt the overlay block with the correct sector offset (accounting for metadata)
             uint8_t *decrypted_buffer = malloc(block_size);
             if (!decrypted_buffer)
                 return cleanup("Failed to allocate decrypted buffer", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
 
             size_t sectors_per_block = block_size / SECTOR_SIZE;
             // Overlay file has 8MB metadata, so its sector numbering is offset
@@ -189,7 +190,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                                            overlay_sector_offset)) {
                 free(decrypted_buffer);
                 return cleanup("Failed to decrypt overlay block", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
             }
 
             // Re-encrypt with the correct sector offset for the output file
@@ -197,7 +198,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
             if (!reencrypted_buffer) {
                 free(decrypted_buffer);
                 return cleanup("Failed to allocate reencrypted buffer", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
             }
 
             size_t output_sector_offset = stripe_index * sectors_per_block;
@@ -206,14 +207,14 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                 free(decrypted_buffer);
                 free(reencrypted_buffer);
                 return cleanup("Failed to re-encrypt overlay block", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
             }
 
             if (fwrite(reencrypted_buffer, 1, bytes_read, output_file) != bytes_read) {
                 free(decrypted_buffer);
                 free(reencrypted_buffer);
                 return cleanup("Failed to write to output image", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
             }
             free(decrypted_buffer);
             free(reencrypted_buffer);
@@ -221,12 +222,12 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
             bytes_read = fread(buffer, 1, block_size, base_file);
             if (bytes_read < block_size && !feof(base_file))
                 return cleanup("Failed to read from base image", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
 
             uint8_t *encrypted_buffer = malloc(block_size);
             if (!encrypted_buffer)
                 return cleanup("Failed to allocate encrypted buffer", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
 
             size_t sectors_per_block = block_size / SECTOR_SIZE;
             size_t sector_offset = stripe_index * sectors_per_block;
@@ -234,13 +235,13 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                                            sector_offset)) {
                 free(encrypted_buffer);
                 return cleanup("Failed to encrypt base block", base_file, overlay_file, output_file,
-                               metadata, buffer);
+                               metadata, encrypted_metadata, buffer);
             }
 
             if (fwrite(encrypted_buffer, 1, block_size, output_file) != block_size) {
                 free(encrypted_buffer);
                 return cleanup("Failed to write to output image", base_file, overlay_file,
-                               output_file, metadata, buffer);
+                               output_file, metadata, encrypted_metadata, buffer);
             }
             free(encrypted_buffer);
         }
@@ -249,7 +250,8 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
     }
 
     printf("Processed %lu stripes\n", stripe_index);
-    return cleanup(NULL, base_file, overlay_file, output_file, metadata, buffer);
+    return cleanup(NULL, base_file, overlay_file, output_file, metadata, encrypted_metadata,
+                   buffer);
 }
 
 int process_decryption_files(const char *kek_file, const char *vhost_backend_conf_file,
@@ -568,7 +570,7 @@ void cleanup_xts_decrypt_ctx(xts_decrypt_ctx_t *xts_ctx) {
     }
 }
 
-int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *encrypted_data,
+int decrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, unsigned char *encrypted_data,
                               unsigned char *decrypted_data, size_t data_len,
                               size_t sector_offset) {
     int len, plaintext_len;
@@ -636,13 +638,15 @@ int encrypt_xts_data_with_ctx(xts_decrypt_ctx_t *xts_ctx, const unsigned char *p
 }
 
 int cleanup(char *error_msg, FILE *base_file, FILE *overlay_file, FILE *output_file,
-            struct ubi_metadata *metadata, uint8_t *buffer) {
+            struct ubi_metadata *metadata, struct ubi_metadata *encrypted_metadata,
+            uint8_t *buffer) {
     if (error_msg != NULL) fprintf(stderr, "%s\n", error_msg);
     if (buffer) free(buffer);
     if (base_file) fclose(base_file);
     if (overlay_file) fclose(overlay_file);
     if (output_file) fclose(output_file);
     if (metadata) free(metadata);
+    if (encrypted_metadata) free(encrypted_metadata);
     return (error_msg != NULL);
 }
 
