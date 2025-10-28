@@ -167,6 +167,7 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
             return cleanup("Failed to seek in output image", base_file, overlay_file, output_file,
                            metadata, encrypted_metadata, buffer);
 
+        size_t sectors_per_block = block_size / SECTOR_SIZE;
         size_t bytes_read;
         if (stripe_index >= base_stripe_count ||
             ubi_get_stripe_status_from_metadata(metadata, stripe_index) == 1) {
@@ -181,7 +182,6 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                 return cleanup("Failed to allocate decrypted buffer", base_file, overlay_file,
                                output_file, metadata, encrypted_metadata, buffer);
 
-            size_t sectors_per_block = block_size / SECTOR_SIZE;
             // Overlay file has 8MB metadata, so its sector numbering is offset
             size_t overlay_sector_offset =
                 stripe_index * sectors_per_block + (UBI_METADATA_SIZE / SECTOR_SIZE);
@@ -229,7 +229,6 @@ int flatten_image(const char *base_image_path, const char *overlay_image_path,
                 return cleanup("Failed to allocate encrypted buffer", base_file, overlay_file,
                                output_file, metadata, encrypted_metadata, buffer);
 
-            size_t sectors_per_block = block_size / SECTOR_SIZE;
             size_t sector_offset = stripe_index * sectors_per_block;
             if (!encrypt_xts_data_with_ctx(xts_ctx, buffer, encrypted_buffer, block_size,
                                            sector_offset)) {
